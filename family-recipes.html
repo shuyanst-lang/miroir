@@ -253,6 +253,19 @@ body::before {
 .si-amt { font-size: 13px; color: var(--text-2); }
 .shopping-progress { font-size: 12px; color: var(--text-3); text-align: center; margin-top: 14px; }
 
+/* Sync box */
+.sync-box { background: var(--surface); border-radius: var(--r); padding: 16px; box-shadow: var(--shadow); margin-bottom: 4px; }
+.sync-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.sync-desc { font-size: 13px; color: var(--text-2); margin-bottom: 12px; line-height: 1.5; }
+.sync-btns { display: flex; gap: 10px; }
+.sync-btn {
+  flex: 1; padding: 10px; border-radius: var(--r-sm); border: none;
+  font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; text-align: center;
+  display: flex; align-items: center; justify-content: center; gap: 4px;
+}
+.sync-btn.export { background: var(--accent-light); color: var(--accent); }
+.sync-btn.import { background: var(--warm-light); color: var(--warm); }
+
 /* Manage tab */
 .section-label { font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); margin-bottom: 10px; }
 .pending-card {
@@ -469,8 +482,18 @@ body::before {
 
   <!-- Manage tab -->
   <div class="tab-panel" id="tab-manage">
-    <div id="pendingSection"></div>
-    <div id="approvedSection" class="mt-24"></div>
+    <div class="sync-box">
+      <div class="sync-title">数据同步</div>
+      <p class="sync-desc">数据存在本机浏览器，两个人共享菜谱请导出发给对方导入</p>
+      <div class="sync-btns">
+        <button class="sync-btn export" onclick="exportData()">📤 导出菜谱</button>
+        <label class="sync-btn import">
+          📥 导入菜谱
+          <input type="file" accept=".json" onchange="importData(event)" style="display:none">
+        </label>
+      </div>
+    </div>
+    <div id="approvedSection" style="margin-top:20px"></div>
   </div>
 
 </main>
@@ -582,8 +605,7 @@ body::before {
           <label class="form-label">备注 / 小贴士</label>
           <textarea class="form-textarea" id="f-notes" placeholder="例如：葱要在最后放，这样更香"></textarea>
         </div>
-        <button type="submit" class="submit-btn">提交审核</button>
-        <p class="submit-note">提交后进入「管理」→ 待审核，审核通过后正式收录 ✓</p>
+        <button type="submit" class="submit-btn">保存菜谱</button>
       </form>
     </div>
   </div>
@@ -915,29 +937,10 @@ function clearShopping() {
 
 // ---- Manage ----
 function renderManage() {
-  const pending = DB.recipes.filter(r => r.status === 'pending');
   const approved = DB.recipes.filter(r => r.status === 'approved');
-
-  document.getElementById('pendingSection').innerHTML = pending.length === 0
-    ? `<div style="text-align:center;padding:20px;font-size:14px;color:var(--text-3)">暂无待审核菜谱 ✓</div>`
-    : `<div class="section-label">待审核 (${pending.length})</div>
-      ${pending.map(r => `
-      <div class="pending-card">
-        <div class="pending-top">
-          <span style="font-size:22px">${emo(r.category)}</span>
-          <div class="pending-name">${r.name}</div>
-          <span class="badge-pending">待审核</span>
-        </div>
-        <div class="pending-sub">${r.category} · ${r.ingredients.length} 种食材 · ${r.steps.length} 个步骤</div>
-        <div class="pending-actions">
-          <button class="btn-approve" onclick="approve('${r.id}')">✓ 通过，收录！</button>
-          <button class="btn-reject" onclick="reject('${r.id}')">✗ 不好吃，删除</button>
-        </div>
-      </div>`).join('')}`;
-
   document.getElementById('approvedSection').innerHTML = `
-    <div class="section-label">已收录菜谱 (${approved.length})</div>
-    ${approved.map((r,i) => `
+    <div class="section-label">所有菜谱 (${approved.length})</div>
+    ${approved.map(r => `
     <div class="approved-row" id="ar-${r.id}">
       <span style="font-size:20px">${emo(r.category)}</span>
       <div class="approved-row-info">
@@ -948,18 +951,42 @@ function renderManage() {
     </div>`).join('')}`;
 }
 
-function approve(id) {
-  const r = DB.recipes.find(x => x.id === id);
-  if (!r) return;
-  r.status = 'approved';
-  save(); renderManage(); renderLibrary();
-  showToast(`「${r.name}」已收录 🎉`);
+// ---- Export / Import ----
+function exportData() {
+  const data = JSON.stringify({ recipes: DB.recipes, exportedAt: Date.now() }, null, 2);
+  const blob = new Blob([data], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '我们的菜谱_' + new Date().toISOString().slice(0,10) + '.json';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('菜谱已导出 📤');
 }
 
-function reject(id) {
-  DB.recipes = DB.recipes.filter(x => x.id !== id);
-  save(); renderManage();
-  showToast('已删除');
+function importData(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      if (!Array.isArray(data.recipes)) throw new Error('bad format');
+      let added = 0;
+      data.recipes.forEach(r => {
+        if (!DB.recipes.find(x => x.id === r.id)) {
+          DB.recipes.push({ ...r, status: 'approved' });
+          added++;
+        }
+      });
+      save(); renderManage(); renderLibrary();
+      showToast(`导入完成，新增 ${added} 道菜 ✓`);
+    } catch(err) {
+      showToast('导入失败，文件格式有误');
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
 }
 
 function startDelete(id) {
@@ -1089,16 +1116,16 @@ function submitRecipe(e) {
     cookCount: 0,
     ingredients: ings, steps,
     notes: document.getElementById('f-notes').value.trim(),
-    status: 'pending',
+    status: 'approved',
     createdAt: Date.now()
   });
   save();
   closeModal('addModal');
-  showToast('菜谱已提交，等待审核 ✓');
+  showToast('菜谱已保存 🎉');
   setTimeout(() => {
-    const btn = document.querySelector('[data-tab="manage"]');
-    switchTab('manage', btn);
-  }, 500);
+    const btn = document.querySelector('[data-tab="library"]');
+    switchTab('library', btn);
+  }, 400);
 }
 
 // ---- Modal helpers ----
